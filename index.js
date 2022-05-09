@@ -1,65 +1,119 @@
 import express, {json} from "express";
 import cors from "cors";
 import dayjs from 'dayjs';
+import dotenv from "dotenv";
+import {MongoClient} from "mongodb";
+import joi from "joi";
+
+// import { cadastro, login } from "./controllers/authController.js";
+// import { painel, painelGet } from "./controllers/displayController.js";
+import db from "./db/db.js";
 
 const app = express();
 app.use(cors());
 app.use(json());
+dotenv.config();
 
-const users = [
-    {name: 'João', email: "teste@teste.com", senha: 1234}, 
-    {name: 'João1', email: "teste@teste1.com", senha: 1234},
-    {name: 'João2', email: "teste@teste2.com", senha: 1234},
-    {name: 'João3', email: "teste@teste3.com", senha: 1234},
-]
+let usuario
 
-const movimentacao =[
-    {data: '01/01',name: 'João', descricao: 'Venda do carro', valor: 6000, tipo: 'entrada'},
-    {data: '02/01',name: 'João', descricao: 'salario', valor: 5000, tipo: 'entrada'},
-    {data: '03/01',name: 'João', descricao: 'Aluguel', valor: 3000, tipo: 'saida'},
-    {data: '04/01',name: 'João', descricao: 'pró-labore', valor: 2000, tipo: 'entrada'},
-    {data: '05/01',name: 'João1', descricao: 'Venda do carro', valor: 16000, tipo: 'entrada'},
-    {data: '06/01',name: 'João1', descricao: 'salario', valor: 4000, tipo: 'entrada'},
-    {data: '07/01',name: 'João1', descricao: 'Aluguel', valor: 5000, tipo: 'saida'},
-]
 
-app.post ("/cadastro", (req, res) => {
+app.post ("/cadastro", async (req, res) => {
     const {name, email, senha} = req.body;
-    if (name === "" || email === "" || senha === "") {
-        console.log("Dados incompletos");
-        return res.status(422).send("Dados incompletos");
+    const schemaUsers = joi.object({
+        name: joi.string().required(),
+        email: joi.string().email().required(),
+        senha: joi.string().required() 
+    })
+    const result = schemaUsers.validate({name, email, senha});
+
+    if (result.error) {
+        return res.status(422).send(result.error.details[0].message);
     }
-    users.push({name, email, senha});
-    console.log(`Usuário ${name} cadastrado com sucesso`);
-    res.status(201).send(users);
+
+    try{
+        const user = await db.collection("users").find({email}).toArray();
+        if (user.length > 0) {
+            console.log("Usuário já existe");
+            return res.status(422).send("Usuário já existe");
+        }
+        await db.collection("users").insertOne({name, email, senha});
+        console.log("Usuário cadastrado");
+        return res.status(201).send("Usuário cadastrado");
+    }
+    catch(err){
+        console.log(err);
+        return res.status(500).send("Erro ao cadastrar");
+    }
 })
 
-app.post ("/login", (req, res) => {
+app.post ("/login", async (req, res) => {
     const {email, senha} = req.body;
-    const user = users.find(usuario => usuario.email === email && usuario.senha === senha);
-    if (!user) {
-        console.log("Usuário ou senha inválidos");
-        return res.status(422).send("Usuário ou senha inválidos");
+    const schemaUsers = joi.object({
+        email: joi.string().email().required(),
+        senha: joi.string().required()
+    })
+    const result = schemaUsers.validate({email, senha});
+
+    if (result.error) {
+        return res.status(422).send(result.error.details[0].message);
     }
-    console.log(`Usuário ${user.name} logado com sucesso`);
-    res.status(201).send(user)
+
+    try{
+        const user = await db.collection("users").find({email, senha}).toArray();
+        // if (!user)
+        if (user.length === 0) {
+            console.log("Usuário ou senha não conferem");
+            return res.status(422).send("Usuário ou senha não conferem");
+        }
+        usuario = user[0];
+        console.log("Usuário logado");
+        console.log(usuario);
+        return res.status(201).send(usuario);
+    }
+    catch(err){
+        console.log(err);
+        return res.status(500).send("Erro ao Fazer Login");
+    }
 })
 
-app.post ("/painel", (req, res) => {
+// app.post("/painel", painel)
+// app.get("/painel", painelGet)
+
+app.post ("/painel", async (req, res) => {
     const {valor, descricao, tipo} = req.body;
-    if (valor === "" || descricao === "" || tipo === "") {
-        console.log("Dados incompletos");
-        return res.status(422).send("Dados incompletos");
+    const schemaMovimentacao = joi.object({
+        tipo: joi.string().required(),
+        descricao: joi.string().required(),
+        valor: joi.number().required()
+    })
+    const result = schemaMovimentacao.validate({valor, descricao, tipo});
+
+    if (result.error) {
+        return res.status(422).send(result.error.details[0].message);
     }
-    movimentacao.push({data: dayjs().format('DD/MM'), name: req.body.name, descricao, valor, tipo});
-    console.log(`Movimentação cadastrada com sucesso`);
-    res.status(201).send("Movimentação cadastrada com sucesso");
+
+    try{
+        const movimentacao = await db.collection("movimentacao").insertOne({data: dayjs().format('DD/MM'), email: usuario.email, descricao, valor, tipo});
+        console.log("Movimentação inserida");
+        return res.status(201).send("Movimentação inserida");
+    }
+    catch(err){
+        console.log(err);
+        return res.status(500).send("Erro ao cadastrar movimentação");
+    }
 })
-app.get ("/painel", (req, res) => {
-    const {name} = req.body;
-    const extrato = movimentacao.filter(usuario => usuario.name === name);
-    console.log(extrato);
-    res.status(201).send(extrato)
+app.get ("/painel", async (req, res) => {
+    const email = usuario.email;
+
+    try{
+        const extrato = await db.collection("movimentacao").find({email}).toArray();
+        console.log("Movimentações");
+        return res.status(201).send(extrato);
+    }
+    catch(err){
+        console.log(err);
+        return res.status(500).send("Erro ao buscar movimentações");
+    }
 })
 
-app.listen(5000, console.log("Server ligado na porta 5000"));
+app.listen((process.env.PORTA), console.log(`Server ligado na porta ${process.env.PORTA}`));    
