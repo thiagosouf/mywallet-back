@@ -4,6 +4,8 @@ import dayjs from 'dayjs';
 import dotenv from "dotenv";
 import {MongoClient} from "mongodb";
 import joi from "joi";
+import {v4 as uuid} from "uuid";
+import bcrypt from "bcryptjs";
 
 // import { cadastro, login } from "./controllers/authController.js";
 // import { painel, painelGet } from "./controllers/displayController.js";
@@ -11,32 +13,34 @@ import db from "./db/db.js";
 
 const app = express();
 app.use(cors());
-app.use(json());
-dotenv.config();
+app.use(json());  //middleware 
+dotenv.config();  //middleware 
 
 let usuario
 
 
 app.post ("/cadastro", async (req, res) => {
-    const {name, email, senha} = req.body;
+    const {name, email, senha, confirmSenha} = req.body;
     const schemaUsers = joi.object({
         name: joi.string().required(),
         email: joi.string().email().required(),
-        senha: joi.string().required() 
+        senha: joi.string().required(),
+        confirmSenha: joi.ref("senha") 
     })
-    const result = schemaUsers.validate({name, email, senha});
-
-    if (result.error) {
+    // const result = schemaUsers.validate({name, email, senha});
+    const {error} = schemaUsers.validate(req.body,{abortEarly: false});
+    if (error) {
         return res.status(422).send(result.error.details[0].message);
     }
 
     try{
+        const SALT = 10;
         const user = await db.collection("users").find({email}).toArray();
         if (user.length > 0) {
             console.log("Usuário já existe");
             return res.status(422).send("Usuário já existe");
         }
-        await db.collection("users").insertOne({name, email, senha});
+        await db.collection("users").insertOne({name, email, senha: bcrypt.hashSync(senha, SALT)});
         console.log("Usuário cadastrado");
         return res.status(201).send("Usuário cadastrado");
     }
@@ -59,17 +63,22 @@ app.post ("/login", async (req, res) => {
     }
 
     try{
-        const user = await db.collection("users").find({email, senha}).toArray();
+        const user = await db.collection("users").find({email}).toArray();
         // if (!user)
         if (user.length === 0) {
             console.log("Usuário ou senha não conferem");
             return res.status(422).send("Usuário ou senha não conferem");
         }
+
+        if(user && bcrypt.compareSync(senha, user[0].senha)){
+            const token = uuid();
+            await db.collection("sessions").insertOne({token, userId: user[0]._id});
+
         usuario = user[0];
         console.log("Usuário logado");
         console.log(usuario);
         return res.status(201).send(usuario);
-    }
+    }}
     catch(err){
         console.log(err);
         return res.status(500).send("Erro ao Fazer Login");
@@ -116,4 +125,4 @@ app.get ("/painel", async (req, res) => {
     }
 })
 
-app.listen((process.env.PORTA), console.log(`Server ligado na porta ${process.env.PORTA}`));    
+app.listen((process.env.PORT), console.log(`Server ligado na porta ${process.env.PORT}`));    
